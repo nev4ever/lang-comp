@@ -162,6 +162,81 @@ func checksumBytes(data []byte) uint64 {
 	return h
 }
 
+func lcg32(x uint32) uint32 {
+	return x*1664525 + 1013904223
+}
+
+func allocGCChecksum(objects int, rounds int, payloadWords int, seed uint32) uint64 {
+	var checksum uint64
+	for r := 0; r < rounds; r++ {
+		base := uint32((uint64(seed) + uint64(r)*2654435761) & 0xFFFFFFFF)
+		type item struct {
+			id    int
+			a     int
+			b     int
+			first int
+			last  int
+		}
+		items := make([]item, objects)
+		for i := 0; i < objects; i++ {
+			x := lcg32(base + uint32(i))
+			first := 0
+			last := 0
+			for p := 0; p < payloadWords; p++ {
+				mask := uint32((uint64(p+1) * 2246822519) & 0xFFFFFFFF)
+				x = lcg32(x ^ mask)
+				v := int(x % 9973)
+				if p == 0 {
+					first = v
+				}
+				last = v
+			}
+			items[i] = item{
+				id:    i,
+				a:     int(x % 1000003),
+				b:     int((x >> 8) % 1000003),
+				first: first,
+				last:  last,
+			}
+		}
+		for _, it := range items {
+			checksum = (checksum + uint64(it.id*17+it.a*31+it.b*47+it.first*73+it.last*89)) % mod
+		}
+	}
+	return checksum
+}
+
+func channelQueueChecksum(messages int, seed uint32, threads int) uint64 {
+	if threads < 1 {
+		threads = 1
+	}
+	ch := make(chan uint64, threads*2)
+	var wg sync.WaitGroup
+	for t := 0; t < threads; t++ {
+		start := (t * messages) / threads
+		end := ((t + 1) * messages) / threads
+		wg.Add(1)
+		go func(s int, e int) {
+			defer wg.Done()
+			var local uint64
+			for i := s; i < e; i++ {
+				x := lcg32(seed + uint32(i))
+				local = (local + uint64(x%uint32(mod))) % mod
+			}
+			ch <- local
+		}(start, end)
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+	var checksum uint64
+	for v := range ch {
+		checksum = (checksum + v) % mod
+	}
+	return checksum
+}
+
 func fillMatrixLCG(n int, seed uint32, valueMod int) []int {
 	total := n * n
 	out := make([]int, total)
@@ -342,6 +417,12 @@ func main() {
 	var matN int
 	var matA []int
 	var matB []int
+	var allocObjects int
+	var allocRounds int
+	var allocPayloadWords int
+	var allocSeed uint64
+	var channelMessages int
+	var channelSeed uint64
 
 	switch *workload {
 	case "bubble", "quick", "merge":
@@ -387,6 +468,32 @@ func main() {
 		matA = fillMatrixLCG(matN, uint32(seedA), valueMod)
 		matB = fillMatrixLCG(matN, uint32(seedB), valueMod)
 		nValue = matN
+	case "alloc_gc":
+		allocLines, err := readLines(*input)
+		if err != nil {
+			panic(err)
+		}
+		fields := strings.Fields(allocLines[0])
+		if len(fields) != 4 {
+			panic("invalid alloc_gc input")
+		}
+		allocObjects, _ = strconv.Atoi(fields[0])
+		allocRounds, _ = strconv.Atoi(fields[1])
+		allocPayloadWords, _ = strconv.Atoi(fields[2])
+		allocSeed, _ = strconv.ParseUint(fields[3], 10, 32)
+		nValue = allocObjects
+	case "channel_queue_mt":
+		channelLines, err := readLines(*input)
+		if err != nil {
+			panic(err)
+		}
+		fields := strings.Fields(channelLines[0])
+		if len(fields) != 3 {
+			panic("invalid channel_queue_mt input")
+		}
+		channelMessages, _ = strconv.Atoi(fields[0])
+		channelSeed, _ = strconv.ParseUint(fields[2], 10, 32)
+		nValue = channelMessages
 	default:
 		fmt.Fprintln(os.Stderr, "unknown workload")
 		os.Exit(1)
@@ -442,6 +549,14 @@ func main() {
 		case "matmul_mt":
 			start := time.Now()
 			checksum = int64(matmulThreadedChecksum(matA, matB, matN, *threads))
+			runTimes = append(runTimes, float64(time.Since(start).Nanoseconds())/1_000_000.0)
+		case "alloc_gc":
+			start := time.Now()
+			checksum = int64(allocGCChecksum(allocObjects, allocRounds, allocPayloadWords, uint32(allocSeed)))
+			runTimes = append(runTimes, float64(time.Since(start).Nanoseconds())/1_000_000.0)
+		case "channel_queue_mt":
+			start := time.Now()
+			checksum = int64(channelQueueChecksum(channelMessages, uint32(channelSeed), *threads))
 			runTimes = append(runTimes, float64(time.Since(start).Nanoseconds())/1_000_000.0)
 		}
 	}

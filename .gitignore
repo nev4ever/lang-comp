@@ -1,3 +1,15 @@
 bin/
 __pycache__/
 *.class
+node_modules/
+.venv/
+cs-test/bin/
+cs-test/obj/
+cs-test/
+targets/csharp/bin/
+targets/csharp/obj/
+data/*
+!data/.gitkeep
+*.log
+*.tmp
+*.swp

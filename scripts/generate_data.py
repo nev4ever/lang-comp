@@ -143,23 +143,38 @@ def gen_matmul(path: Path, size: int, seed_a: int, seed_b: int, value_mod: int) 
     path.write_text(f"{size} {seed_a} {seed_b} {value_mod}\n", encoding="utf-8")
 
 
+def gen_alloc_gc(
+    path: Path, objects: int, rounds: int, payload_words: int, seed: int
+) -> None:
+    path.write_text(f"{objects} {rounds} {payload_words} {seed}\n", encoding="utf-8")
+
+
+def gen_channel_queue(path: Path, messages: int, queue_size: int, seed: int) -> None:
+    path.write_text(f"{messages} {queue_size} {seed}\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Generate deterministic benchmark inputs"
     )
     parser.add_argument("--out-dir", default="data")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--numbers-count", type=int, default=20000)
+    parser.add_argument("--numbers-count", type=int, default=8000)
     parser.add_argument("--strings-lines", type=int, default=22000)
     parser.add_argument("--primes-limit", type=int, default=175000000)
     parser.add_argument("--life-rows", type=int, default=256)
     parser.add_argument("--life-cols", type=int, default=256)
-    parser.add_argument("--life-steps", type=int, default=220)
+    parser.add_argument("--life-steps", type=int, default=100)
     parser.add_argument("--io-size-mb", type=int, default=32)
     parser.add_argument("--matmul-size", type=int, default=1024)
     parser.add_argument("--matmul-seed-a", type=int, default=12345)
     parser.add_argument("--matmul-seed-b", type=int, default=67890)
     parser.add_argument("--matmul-value-mod", type=int, default=97)
+    parser.add_argument("--alloc-gc-objects", type=int, default=250000)
+    parser.add_argument("--alloc-gc-rounds", type=int, default=4)
+    parser.add_argument("--alloc-gc-payload-words", type=int, default=16)
+    parser.add_argument("--channel-queue-messages", type=int, default=500000)
+    parser.add_argument("--channel-queue-size", type=int, default=2048)
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -178,6 +193,19 @@ def main() -> int:
         args.matmul_seed_a,
         args.matmul_seed_b,
         args.matmul_value_mod,
+    )
+    gen_alloc_gc(
+        out_dir / "alloc_gc.txt",
+        args.alloc_gc_objects,
+        args.alloc_gc_rounds,
+        args.alloc_gc_payload_words,
+        args.seed + 100,
+    )
+    gen_channel_queue(
+        out_dir / "channel_queue_mt.txt",
+        args.channel_queue_messages,
+        args.channel_queue_size,
+        args.seed + 200,
     )
 
     print(f"Generated inputs in {out_dir}")

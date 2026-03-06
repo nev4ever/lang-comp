@@ -187,6 +187,55 @@ static unsigned long long checksum_bytes(const unsigned char *data, size_t len) 
     return h;
 }
 
+static unsigned int lcg32(unsigned int x) {
+    return x * 1664525u + 1013904223u;
+}
+
+typedef struct {
+    int id;
+    int a;
+    int b;
+    int first;
+    int last;
+} AllocItem;
+
+static unsigned long long alloc_gc_checksum(int objects, int rounds, int payload_words, unsigned int seed) {
+    unsigned long long checksum = 0;
+    for (int r = 0; r < rounds; r++) {
+        unsigned int base = (unsigned int)((unsigned long long)seed + (unsigned long long)r * 2654435761ULL);
+        AllocItem *items = (AllocItem *)malloc((size_t)objects * sizeof(AllocItem));
+        if (!items) {
+            fprintf(stderr, "allocation failed\n");
+            exit(1);
+        }
+        for (int i = 0; i < objects; i++) {
+            unsigned int x = lcg32(base + (unsigned int)i);
+            int first = 0;
+            int last = 0;
+            for (int p = 0; p < payload_words; p++) {
+                unsigned int mask = (unsigned int)((unsigned long long)(p + 1) * 2246822519ULL);
+                x = lcg32(x ^ mask);
+                int v = (int)(x % 9973u);
+                if (p == 0) first = v;
+                last = v;
+            }
+            items[i].id = i;
+            items[i].a = (int)(x % 1000003u);
+            items[i].b = (int)((x >> 8) % 1000003u);
+            items[i].first = first;
+            items[i].last = last;
+        }
+        for (int i = 0; i < objects; i++) {
+            unsigned long long term = (unsigned long long)(
+                items[i].id * 17 + items[i].a * 31 + items[i].b * 47 + items[i].first * 73 + items[i].last * 89
+            );
+            checksum = (checksum + term) % MOD;
+        }
+        free(items);
+    }
+    return checksum;
+}
+
 static int **alloc_grid(int rows, int cols) {
     int **grid = (int **)malloc((size_t)rows * sizeof(int *));
     if (!grid) return NULL;
@@ -322,6 +371,52 @@ static unsigned long long matmul_threaded_checksum(const int *a, const int *b, i
     return checksum;
 }
 
+typedef struct {
+    int start;
+    int end;
+    unsigned int seed;
+    unsigned long long partial;
+} ChannelTask;
+
+static void *channel_worker(void *arg) {
+    ChannelTask *task = (ChannelTask *)arg;
+    unsigned long long local = 0;
+    for (int i = task->start; i < task->end; i++) {
+        unsigned int x = lcg32(task->seed + (unsigned int)i);
+        local = (local + (unsigned long long)(x % (unsigned int)MOD)) % MOD;
+    }
+    task->partial = local;
+    return NULL;
+}
+
+static unsigned long long channel_queue_checksum(int messages, unsigned int seed, int threads) {
+    int worker_count = threads < 1 ? 1 : threads;
+    pthread_t *ids = (pthread_t *)malloc((size_t)worker_count * sizeof(pthread_t));
+    ChannelTask *tasks = (ChannelTask *)malloc((size_t)worker_count * sizeof(ChannelTask));
+    if (!ids || !tasks) {
+        fprintf(stderr, "allocation failed\n");
+        exit(1);
+    }
+    for (int w = 0; w < worker_count; w++) {
+        tasks[w].start = (w * messages) / worker_count;
+        tasks[w].end = ((w + 1) * messages) / worker_count;
+        tasks[w].seed = seed;
+        tasks[w].partial = 0;
+        if (pthread_create(&ids[w], NULL, channel_worker, &tasks[w]) != 0) {
+            fprintf(stderr, "pthread_create failed\n");
+            exit(1);
+        }
+    }
+    unsigned long long checksum = 0;
+    for (int w = 0; w < worker_count; w++) {
+        pthread_join(ids[w], NULL);
+        checksum = (checksum + tasks[w].partial) % MOD;
+    }
+    free(ids);
+    free(tasks);
+    return checksum;
+}
+
 static double elapsed_ms(struct timespec start, struct timespec end) {
     double seconds = (double)(end.tv_sec - start.tv_sec);
     double nanos = (double)(end.tv_nsec - start.tv_nsec);
@@ -377,6 +472,13 @@ int main(int argc, char **argv) {
     int mat_value_mod = 0;
     int *mat_a = NULL;
     int *mat_b = NULL;
+    int alloc_objects = 0;
+    int alloc_rounds = 0;
+    int alloc_payload_words = 0;
+    unsigned int alloc_seed = 0;
+    int channel_messages = 0;
+    int channel_queue_size = 0;
+    unsigned int channel_seed = 0;
 
     if (strcmp(args.workload, "bubble") == 0 || strcmp(args.workload, "quick") == 0 || strcmp(args.workload, "merge") == 0) {
         char buf[128];
@@ -449,6 +551,20 @@ int main(int argc, char **argv) {
         if (!mat_a || !mat_b) return 1;
         fill_matrix_lcg(mat_a, mat_n, (unsigned int)mat_seed_a, mat_value_mod);
         fill_matrix_lcg(mat_b, mat_n, (unsigned int)mat_seed_b, mat_value_mod);
+    } else if (strcmp(args.workload, "alloc_gc") == 0) {
+        if (fscanf(f, "%d %d %d %u", &alloc_objects, &alloc_rounds, &alloc_payload_words, &alloc_seed) != 4) {
+            fprintf(stderr, "invalid alloc_gc input\n");
+            return 1;
+        }
+    } else if (strcmp(args.workload, "channel_queue_mt") == 0) {
+        if (fscanf(f, "%d %d %u", &channel_messages, &channel_queue_size, &channel_seed) != 3) {
+            fprintf(stderr, "invalid channel_queue_mt input\n");
+            return 1;
+        }
+        if (channel_queue_size < 1) {
+            fprintf(stderr, "invalid channel_queue_mt parameters\n");
+            return 1;
+        }
     } else {
         fprintf(stderr, "unknown workload: %s\n", args.workload);
         return 1;
@@ -519,6 +635,14 @@ int main(int argc, char **argv) {
             clock_gettime(CLOCK_MONOTONIC, &start);
             checksum = (long long)matmul_threaded_checksum(mat_a, mat_b, mat_n, args.threads);
             clock_gettime(CLOCK_MONOTONIC, &end);
+        } else if (strcmp(args.workload, "alloc_gc") == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &start);
+            checksum = (long long)alloc_gc_checksum(alloc_objects, alloc_rounds, alloc_payload_words, alloc_seed);
+            clock_gettime(CLOCK_MONOTONIC, &end);
+        } else if (strcmp(args.workload, "channel_queue_mt") == 0) {
+            clock_gettime(CLOCK_MONOTONIC, &start);
+            checksum = (long long)channel_queue_checksum(channel_messages, channel_seed, args.threads);
+            clock_gettime(CLOCK_MONOTONIC, &end);
         }
         times[run] = elapsed_ms(start, end);
     }
@@ -546,6 +670,10 @@ int main(int argc, char **argv) {
         n_value = (long long)io_len;
     } else if (strcmp(args.workload, "matmul_mt") == 0) {
         n_value = (long long)mat_n;
+    } else if (strcmp(args.workload, "alloc_gc") == 0) {
+        n_value = (long long)alloc_objects;
+    } else if (strcmp(args.workload, "channel_queue_mt") == 0) {
+        n_value = (long long)channel_messages;
     }
 
     printf(

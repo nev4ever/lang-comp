@@ -103,6 +103,54 @@ function checksumBytes(bytes) {
   return h;
 }
 
+function lcg32(x) {
+  return (Math.imul(x >>> 0, 1664525) + 1013904223) >>> 0;
+}
+
+function allocGcChecksum(objects, rounds, payloadWords, seed) {
+  let checksum = 0;
+  for (let r = 0; r < rounds; r += 1) {
+    const base = (seed + Math.imul(r, 2654435761)) >>> 0;
+    const items = new Array(objects);
+    for (let i = 0; i < objects; i += 1) {
+      let x = lcg32((base + i) >>> 0);
+      let first = 0;
+      let last = 0;
+      for (let p = 0; p < payloadWords; p += 1) {
+        x = lcg32(x ^ (Math.imul(p + 1, 2246822519) >>> 0));
+        const v = x % 9973;
+        if (p === 0) first = v;
+        last = v;
+      }
+      items[i] = { id: i, a: x % 1000003, b: (x >>> 8) % 1000003, first, last };
+    }
+    for (const item of items) {
+      checksum = (checksum
+        + item.id * 17
+        + item.a * 31
+        + item.b * 47
+        + item.first * 73
+        + item.last * 89) % MOD;
+    }
+  }
+  return checksum;
+}
+
+function channelQueueChecksum(messages, seed, threads) {
+  let checksum = 0;
+  for (let t = 0; t < threads; t += 1) {
+    const start = Math.floor((t * messages) / threads);
+    const end = Math.floor(((t + 1) * messages) / threads);
+    let local = 0;
+    for (let i = start; i < end; i += 1) {
+      const x = lcg32((seed + i) >>> 0);
+      local = (local + (x % MOD)) % MOD;
+    }
+    checksum = (checksum + local) % MOD;
+  }
+  return checksum;
+}
+
 function sumPrimes(limit) {
   if (limit < 2) return 0;
   const sieve = new Uint8Array(limit + 1);
@@ -202,6 +250,12 @@ if (import.meta.main) {
   let lifeGrid = null;
   let lifeSteps = 0;
   let ioBytes = null;
+  let allocObjects = 0;
+  let allocRounds = 0;
+  let allocPayloadWords = 0;
+  let allocSeed = 0;
+  let channelMessages = 0;
+  let channelSeed = 0;
 
   if (workload === "bubble" || workload === "quick" || workload === "merge") {
     baseNumbers = Deno.readTextFileSync(input).split(/\r?\n/).filter(Boolean).map((v) => Number.parseInt(v, 10));
@@ -220,6 +274,26 @@ if (import.meta.main) {
   } else if (workload === "io") {
     ioBytes = Deno.readFileSync(input);
     nValue = ioBytes.length;
+  } else if (workload === "alloc_gc") {
+    const parts = Deno.readTextFileSync(input).trim().split(/\s+/);
+    if (parts.length !== 4) {
+      console.error("invalid alloc_gc input");
+      Deno.exit(1);
+    }
+    allocObjects = Number.parseInt(parts[0], 10);
+    allocRounds = Number.parseInt(parts[1], 10);
+    allocPayloadWords = Number.parseInt(parts[2], 10);
+    allocSeed = Number.parseInt(parts[3], 10);
+    nValue = allocObjects;
+  } else if (workload === "channel_queue_mt") {
+    const parts = Deno.readTextFileSync(input).trim().split(/\s+/);
+    if (parts.length !== 3) {
+      console.error("invalid channel_queue_mt input");
+      Deno.exit(1);
+    }
+    channelMessages = Number.parseInt(parts[0], 10);
+    channelSeed = Number.parseInt(parts[2], 10);
+    nValue = channelMessages;
   } else {
     console.error(`unknown workload: ${workload}`);
     Deno.exit(1);
@@ -264,6 +338,14 @@ if (import.meta.main) {
     } else if (workload === "io") {
       const start = performance.now();
       checksum = checksumBytes(ioBytes);
+      runTimes.push(performance.now() - start);
+    } else if (workload === "alloc_gc") {
+      const start = performance.now();
+      checksum = allocGcChecksum(allocObjects, allocRounds, allocPayloadWords, allocSeed);
+      runTimes.push(performance.now() - start);
+    } else if (workload === "channel_queue_mt") {
+      const start = performance.now();
+      checksum = channelQueueChecksum(channelMessages, channelSeed, threads);
       runTimes.push(performance.now() - start);
     }
   }

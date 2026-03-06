@@ -1,0 +1,21 @@
+{
+  "name": "lang-comp",
+  "version": "1.0.0",
+  "description": "language performance comparison",
+  "license": "ISC",
+  "author": "Klaus Wendy",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "drizzle-orm": "^0.45.1",
+    "express": "^5.2.1",
+    "pg": "^8.16.3",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.37.7",
+    "sqlite3": "^5.1.7"
+  }
+}

@@ -166,6 +166,81 @@ public class Benchmark {
         return h;
     }
 
+    private static int lcg32(int x) {
+        return 1664525 * x + 1013904223;
+    }
+
+    private static long allocGcChecksum(int objects, int rounds, int payloadWords, int seed) {
+        long checksum = 0;
+        class Item {
+            int id;
+            int a;
+            int b;
+            int first;
+            int last;
+            Item(int id, int a, int b, int first, int last) {
+                this.id = id;
+                this.a = a;
+                this.b = b;
+                this.first = first;
+                this.last = last;
+            }
+        }
+        for (int r = 0; r < rounds; r++) {
+            int base = (int)((seed & 0xFFFFFFFFL) + (long)r * 2654435761L);
+            Item[] items = new Item[objects];
+            for (int i = 0; i < objects; i++) {
+                int x = lcg32(base + i);
+                int first = 0;
+                int last = 0;
+                for (int p = 0; p < payloadWords; p++) {
+                    int mask = (int)((long)(p + 1) * 2246822519L);
+                    x = lcg32(x ^ mask);
+                    int v = Integer.remainderUnsigned(x, 9973);
+                    if (p == 0) first = v;
+                    last = v;
+                }
+                items[i] = new Item(
+                    i,
+                    Integer.remainderUnsigned(x, 1000003),
+                    Integer.remainderUnsigned(x >>> 8, 1000003),
+                    first,
+                    last
+                );
+            }
+            for (Item it : items) {
+                checksum = (checksum + it.id * 17L + it.a * 31L + it.b * 47L + it.first * 73L + it.last * 89L) % MOD;
+            }
+        }
+        return checksum;
+    }
+
+    private static long channelQueueChecksum(int messages, int seed, int threads) throws InterruptedException {
+        int workerCount = Math.max(1, threads);
+        long[] partials = new long[workerCount];
+        Thread[] workers = new Thread[workerCount];
+        for (int t = 0; t < workerCount; t++) {
+            final int tid = t;
+            final int start = (t * messages) / workerCount;
+            final int end = ((t + 1) * messages) / workerCount;
+            workers[t] = new Thread(() -> {
+                long local = 0;
+                for (int i = start; i < end; i++) {
+                    int x = lcg32(seed + i);
+                    local = (local + Integer.remainderUnsigned(x, (int)MOD)) % MOD;
+                }
+                partials[tid] = local;
+            });
+            workers[t].start();
+        }
+        for (Thread t : workers) {
+            t.join();
+        }
+        long checksum = 0;
+        for (long v : partials) checksum = (checksum + v) % MOD;
+        return checksum;
+    }
+
     private static int[] fillMatrixLCG(int n, int seed, int valueMod) {
         int[] out = new int[n * n];
         long x = seed & 0xFFFFFFFFL;
@@ -247,6 +322,12 @@ public class Benchmark {
         int matN = 0;
         int[] matA = null;
         int[] matB = null;
+        int allocObjects = 0;
+        int allocRounds = 0;
+        int allocPayloadWords = 0;
+        int allocSeed = 0;
+        int channelMessages = 0;
+        int channelSeed = 0;
 
         if (workload.equals("bubble") || workload.equals("quick") || workload.equals("merge")) {
             List<String> raw = readLines(input);
@@ -284,6 +365,20 @@ public class Benchmark {
             matA = fillMatrixLCG(matN, seedA, valueMod);
             matB = fillMatrixLCG(matN, seedB, valueMod);
             nValue = matN;
+        } else if (workload.equals("alloc_gc")) {
+            String[] fields = readLines(input).get(0).split("\\s+");
+            if (fields.length != 4) throw new IllegalArgumentException("invalid alloc_gc input");
+            allocObjects = Integer.parseInt(fields[0]);
+            allocRounds = Integer.parseInt(fields[1]);
+            allocPayloadWords = Integer.parseInt(fields[2]);
+            allocSeed = Integer.parseUnsignedInt(fields[3]);
+            nValue = allocObjects;
+        } else if (workload.equals("channel_queue_mt")) {
+            String[] fields = readLines(input).get(0).split("\\s+");
+            if (fields.length != 3) throw new IllegalArgumentException("invalid channel_queue_mt input");
+            channelMessages = Integer.parseInt(fields[0]);
+            channelSeed = Integer.parseUnsignedInt(fields[2]);
+            nValue = channelMessages;
         } else {
             System.err.println("unknown workload");
             System.exit(1);
@@ -317,6 +412,10 @@ public class Benchmark {
                 checksum = checksumBytes(ioData);
             } else if (workload.equals("matmul_mt")) {
                 checksum = matmulThreadedChecksum(matA, matB, matN, threads);
+            } else if (workload.equals("alloc_gc")) {
+                checksum = allocGcChecksum(allocObjects, allocRounds, allocPayloadWords, allocSeed);
+            } else if (workload.equals("channel_queue_mt")) {
+                checksum = channelQueueChecksum(channelMessages, channelSeed, threads);
             }
             times[run] = (System.nanoTime() - start) / 1_000_000.0;
         }

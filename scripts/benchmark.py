@@ -18,18 +18,20 @@ WORKLOADS = {
     "life": {"input": DATA_DIR / "life.txt"},
     "io": {"input": DATA_DIR / "io.bin"},
     "matmul_mt": {"input": DATA_DIR / "matmul.txt"},
+    "alloc_gc": {"input": DATA_DIR / "alloc_gc.txt"},
+    "channel_queue_mt": {"input": DATA_DIR / "channel_queue_mt.txt"},
 }
 
 TARGETS = {
     "node": {
         "cmd": ["node", str(ROOT / "targets" / "js" / "benchmark_node_bun.mjs")],
         "requires": ["node"],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
     },
     "bun": {
         "cmd": ["bun", str(ROOT / "targets" / "js" / "benchmark_node_bun.mjs")],
         "requires": ["bun"],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "alloc_gc", "channel_queue_mt"],
     },
     "deno": {
         "cmd": [
@@ -39,33 +41,48 @@ TARGETS = {
             str(ROOT / "targets" / "js" / "benchmark_deno.js"),
         ],
         "requires": ["deno"],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "alloc_gc", "channel_queue_mt"],
     },
     "python": {
         "cmd": ["python3", str(ROOT / "targets" / "python" / "benchmark.py")],
         "requires": ["python3"],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "alloc_gc", "channel_queue_mt"],
     },
     "python-numpy": {
         "cmd": ["python3", str(ROOT / "targets" / "python" / "benchmark_numpy.py")],
         "requires": ["python3"],
         "python_modules": ["numpy"],
-        "workloads": ["quick", "merge", "strings", "primes", "life", "io"],
+        "workloads": ["quick", "merge", "strings", "primes", "life", "io", "alloc_gc", "channel_queue_mt"],
     },
     "c": {
         "cmd": [str(ROOT / "bin" / "benchmark_c")],
         "requires": [],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
     },
     "go": {
         "cmd": [str(ROOT / "bin" / "benchmark_go")],
         "requires": [],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
     },
     "java": {
         "cmd": ["java", "-cp", str(ROOT / "bin" / "java"), "Benchmark"],
         "requires": ["java"],
-        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
+    },
+    "csharp": {
+        "cmd": ["dotnet", str(ROOT / "bin" / "csharp" / "Benchmark.dll")],
+        "requires": ["dotnet"],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
+    },
+    "rust": {
+        "cmd": [str(ROOT / "bin" / "benchmark_rust")],
+        "requires": [],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
+    },
+    "zig": {
+        "cmd": [str(ROOT / "bin" / "benchmark_zig")],
+        "requires": [],
+        "workloads": ["bubble", "quick", "merge", "strings", "primes", "life", "io", "matmul_mt", "alloc_gc", "channel_queue_mt"],
     },
 }
 
@@ -73,6 +90,9 @@ BUILD_TOOLS_BY_TARGET = {
     "c": ["gcc"],
     "go": ["go"],
     "java": ["javac", "java"],
+    "csharp": ["dotnet"],
+    "rust": ["rustc"],
+    "zig": ["zig"],
 }
 
 CHECKSUM_RE = re.compile(r"CHECKSUM=(\d+)")
@@ -131,6 +151,34 @@ def ensure_built(selected_targets: list[str], strict: bool) -> list[str]:
                 "-d",
                 str(ROOT / "bin" / "java"),
                 str(ROOT / "targets" / "java" / "Benchmark.java"),
+            ])
+        elif target == "csharp":
+            run([
+                "dotnet",
+                "build",
+                str(ROOT / "targets" / "csharp" / "Benchmark.csproj"),
+                "-c",
+                "Release",
+                "-o",
+                str(ROOT / "bin" / "csharp"),
+            ])
+        elif target == "rust":
+            run([
+                "rustc",
+                "-O",
+                str(ROOT / "targets" / "rust" / "main.rs"),
+                "-o",
+                str(ROOT / "bin" / "benchmark_rust"),
+            ])
+        elif target == "zig":
+            run([
+                "zig",
+                "cc",
+                "-O3",
+                "-pthread",
+                "-o",
+                str(ROOT / "bin" / "benchmark_zig"),
+                str(ROOT / "targets" / "c" / "benchmark.c"),
             ])
 
         available.append(target)

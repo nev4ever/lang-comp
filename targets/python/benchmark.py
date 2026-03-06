@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import queue
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -98,6 +100,90 @@ def checksum_bytes(data: bytes) -> int:
     return h
 
 
+def lcg32(x: int) -> int:
+    return (1664525 * x + 1013904223) & 0xFFFFFFFF
+
+
+def alloc_gc_checksum(objects: int, rounds: int, payload_words: int, seed: int) -> int:
+    checksum = 0
+    for r in range(rounds):
+        items: list[dict[str, object]] = []
+        base = (seed + r * 2654435761) & 0xFFFFFFFF
+        for i in range(objects):
+            x = lcg32((base + i) & 0xFFFFFFFF)
+            first = 0
+            last = 0
+            for p in range(payload_words):
+                x = lcg32(x ^ ((p + 1) * 2246822519 & 0xFFFFFFFF))
+                v = x % 9973
+                if p == 0:
+                    first = v
+                last = v
+            item = {
+                "id": i,
+                "a": x % 1000003,
+                "b": (x >> 8) % 1000003,
+                "first": first,
+                "last": last,
+            }
+            items.append(item)
+        for item in items:
+            checksum = (
+                checksum
+                + (
+                    int(item["id"]) * 17
+                    + int(item["a"]) * 31
+                    + int(item["b"]) * 47
+                    + int(item["first"]) * 73
+                    + int(item["last"]) * 89
+                )
+            ) % MOD
+    return checksum
+
+
+def channel_queue_checksum(messages: int, queue_size: int, seed: int, threads: int) -> int:
+    q: queue.Queue[int | None] = queue.Queue(maxsize=queue_size)
+    producer_count = threads
+    consumer_count = threads
+    sums = [0] * consumer_count
+
+    def producer(start: int, end: int) -> None:
+        for i in range(start, end):
+            x = lcg32((seed + i) & 0xFFFFFFFF)
+            q.put(x % MOD)
+
+    def consumer(idx: int) -> None:
+        local = 0
+        while True:
+            value = q.get()
+            if value is None:
+                q.task_done()
+                break
+            local = (local + value) % MOD
+            q.task_done()
+        sums[idx] = local
+
+    consumers = [threading.Thread(target=consumer, args=(i,)) for i in range(consumer_count)]
+    for t in consumers:
+        t.start()
+
+    producers = []
+    for p in range(producer_count):
+        start = (p * messages) // producer_count
+        end = ((p + 1) * messages) // producer_count
+        t = threading.Thread(target=producer, args=(start, end))
+        producers.append(t)
+        t.start()
+
+    for t in producers:
+        t.join()
+    for _ in range(consumer_count):
+        q.put(None)
+    for t in consumers:
+        t.join()
+    return sum(sums) % MOD
+
+
 def sum_primes(limit: int) -> int:
     if limit < 2:
         return 0
@@ -191,6 +277,16 @@ def main() -> int:
     elif workload == "io":
         io_data = path.read_bytes()
         n_value = len(io_data)
+    elif workload == "alloc_gc":
+        alloc_objects, alloc_rounds, alloc_payload_words, alloc_seed = [
+            int(x) for x in next(line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()).split()
+        ]
+        n_value = alloc_objects
+    elif workload == "channel_queue_mt":
+        channel_messages, channel_queue_size, channel_seed = [
+            int(x) for x in next(line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()).split()
+        ]
+        n_value = channel_messages
     elif workload == "matmul_mt":
         raise ValueError("python target does not support workload: matmul_mt")
     else:
@@ -238,6 +334,14 @@ def main() -> int:
         elif workload == "io":
             start = time.perf_counter()
             checksum = checksum_bytes(io_data)
+            run_times.append((time.perf_counter() - start) * 1000)
+        elif workload == "alloc_gc":
+            start = time.perf_counter()
+            checksum = alloc_gc_checksum(alloc_objects, alloc_rounds, alloc_payload_words, alloc_seed)
+            run_times.append((time.perf_counter() - start) * 1000)
+        elif workload == "channel_queue_mt":
+            start = time.perf_counter()
+            checksum = channel_queue_checksum(channel_messages, channel_queue_size, channel_seed, args.threads)
             run_times.append((time.perf_counter() - start) * 1000)
 
     slowest = max(run_times)
