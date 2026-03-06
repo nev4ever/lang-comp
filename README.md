@@ -218,6 +218,20 @@ make bench-pipeline-pg REQUESTS=500
 python3 scripts/pipeline_benchmark.py --db-backend postgres --requests 500 --pg-url postgresql://postgres:postgres@127.0.0.1:55432/langcomp
 ```
 
+Generate a full CSV + ranking report (core + pipeline sqlite + pipeline postgres):
+
+```bash
+make bench-report
+make bench-report REQUESTS=500 RUNS=5 THREADS=8
+python3 scripts/benchmark_report.py --out-dir reports
+```
+
+Report outputs:
+- `reports/benchmark_results.csv`: all per-scenario rows (`scenario`, `target`, `rank`, `elapsed_ms`).
+- `reports/overall_language_ranking.csv`: language leaderboard using best rank per language in each scenario, then summed (lowest total rank wins).
+- `reports/bar_*.txt`: ASCII bar charts for each scenario.
+- `reports/bar_overall_rank_sum.txt`: ASCII bar chart for total rank-sum comparison.
+
 ### Pipeline Variants
 
 - SQLite backend (`make bench-pipeline`):

@@ -1,4 +1,4 @@
-.PHONY: deps deps-js deps-py pg-up pg-down pg-logs generate build bench bench-workload bench-pipeline bench-pipeline-pg clean
+.PHONY: deps deps-js deps-py pg-up pg-down pg-logs generate build bench bench-workload bench-pipeline bench-pipeline-pg bench-report clean
 
 PYTHON ?= python3
 
@@ -36,6 +36,10 @@ bench-pipeline:
 bench-pipeline-pg: pg-up
 	PIPELINE_PG_URL=$(or $(PG_URL),postgresql://postgres:postgres@127.0.0.1:55432/langcomp) \
 	$(PYTHON) scripts/pipeline_benchmark.py --db-backend postgres --requests $(or $(REQUESTS),300)
+
+bench-report:
+	PIPELINE_PG_URL=$(or $(PG_URL),postgresql://postgres:postgres@127.0.0.1:55432/langcomp) \
+	$(PYTHON) scripts/benchmark_report.py --runs $(or $(RUNS),5) --warmup $(or $(WARMUP),0) --threads $(or $(THREADS),8) --requests $(or $(REQUESTS),300)
 
 pg-up:
 	docker compose -f docker-compose.pipeline.yml up -d

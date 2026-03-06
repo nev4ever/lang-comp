@@ -10,6 +10,8 @@ targets/csharp/bin/
 targets/csharp/obj/
 data/*
 !data/.gitkeep
+reports/
+reports-*/
 *.log
 *.tmp
 *.swp
